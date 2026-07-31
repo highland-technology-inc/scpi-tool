@@ -5,17 +5,21 @@ use rustyline::{Editor, Config, history::MemHistory};
 //
 // Supports readline style history.
 pub struct ReadlineCommands {
-    ed: Editor<(), MemHistory>
+    ed: Editor<(), MemHistory>,
+    interactive: bool
 }
 
 impl ReadlineCommands {
     pub fn new() -> Self {
         let config = Config::builder().auto_add_history(true);
         let history = MemHistory::new();
-        let ed = Editor::with_history(config.build(), history).unwrap();
-        Self {
-            ed
-        }
+        let mut ed = Editor::with_history(config.build(), history).unwrap();
+        let interactive = ed.dimensions().is_some();
+        Self {ed, interactive}
+    }
+
+    pub fn is_interactive(&self) -> bool {
+        self.interactive
     }
 }
 

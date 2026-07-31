@@ -1,4 +1,4 @@
-use clap::{Parser};
+use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 use std::io::{Read, Write};
 use std::println;
@@ -31,14 +31,24 @@ struct Cli {
     baud: Option<u32>,
 
     /// Error fetch mode.  After sending command (if present), query SYST:ERR? until the queue is empty.
-    #[arg(short, long)]
-    errors: bool,
+    #[arg(short, long, value_enum, default_value_t=ErrorsMode::None)]
+    errors: ErrorsMode,
 
     /// The command or query to send to the device.  Should probably be quoted.
     /// If no command is provided, uses stdin.  This will be an interactive session
     /// if stdin is a tty.
     #[clap(trailing_var_arg=true)]
     command: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
+enum ErrorsMode {
+    /// No error checking
+    None,
+    /// Report all errors, ignore "No error"
+    Quiet,
+    /// Report everything from the error queue
+    All
 }
 
 /// Transact a command, returning the result if it's a query.
@@ -126,10 +136,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Ctrl-D.
     //
     let command = String::from(args.command.join(" ").trim());
-    let cmd_iter : Box<dyn Iterator<Item = String>> = if command.is_empty() {
-        Box::new(cmd_iterators::ReadlineCommands::new())
+    let (interactive, cmd_iter) : (bool, Box<dyn Iterator<Item = String>>) = if command.is_empty() {
+        let rl = cmd_iterators::ReadlineCommands::new();
+        (rl.is_interactive(), Box::new(rl))
     } else {
-        Box::new(Option::from(command).into_iter())
+        (false, Box::new(Option::from(command).into_iter()))
     };
 
     // And iterate over all the commands we have until we're
@@ -139,21 +150,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match transaction(&mut port, &c) {
                 Ok(None) =>     {debug!("No query");},
                 Ok(Some(x)) =>  {println!("{x}");}
-                Err(e) =>       {error!("{e}"); return Err(e);}
+                Err(e) => {
+                    error!("{e}");
+                    if !interactive { return Err(e); }
+                }
             }
         }
 
         // If the --errors flag was provided, flush out the 
         // system error queue.
-        if args.errors {
+        if args.errors != ErrorsMode::None {
             loop {
                 match transaction(&mut port, "SYST:ERR?") {
                     Ok(None) =>     {panic!("transaction() didn't see a query")},
                     Ok(Some(x)) =>  {
-                        println!("{x}");
-                        if x.contains("No error") { break; }
+                        let err = !x.contains("No error");
+                        if err || (args.errors == ErrorsMode::All) {
+                            println!("{x}");
+                        }
+                        if !err { break; }
                     }
-                    Err(e) =>       {error!("{e}"); return Err(e);}
+                    Err(e) => {
+                        error!("{e}");
+                        if !interactive { return Err(e); }
+                    }
                 }
             }
         }
