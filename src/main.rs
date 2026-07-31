@@ -6,6 +6,7 @@ use std::time::Duration;
 use serialport;
 use log::{debug, info, warn, error};
 use env_logger;
+use regex::Regex;
 
 const LONG_ABOUT: &str = "Command line tool for executing SCPI queries and gathering responses.
 
@@ -23,14 +24,14 @@ struct Cli {
     /// Serial port
     port: PathBuf,
 
-    /// Baud rate
-    #[arg(short, long, default_value_t=38400)]
-    baud: u32,
+    /// Baud rate.  Defaults to no-change if possible, or 38400 as a last resort.
+    #[arg(short, long)]
+    baud: Option<u32>,
 
     /// Error fetch mode.  After sending command (if present), query SYST:ERR? until the queue is empty.
     #[arg(short, long)]
     errors: bool,
-
+    
     /// The command or query to send to the device.  Should probably be quoted.
     #[clap(trailing_var_arg=true)]
     command: Vec<String>,
@@ -72,6 +73,26 @@ fn transaction<T: Read+Write>(port: &mut T, command: &str) -> Result<Option<Stri
     Ok(None)
 }
 
+/// Make a call to the 'stty' program to determine the existing baud rate of a serial port
+fn get_baud_from_stty(port: &str) -> Result<u32, Box<dyn std::error::Error>> {
+    debug!("Trying to read baud rate from {port}");
+    let result = std::process::Command::new("stty")
+        .arg("-F")
+        .arg(port)
+        .output()?;
+
+    let text = str::from_utf8(&result.stdout)?;
+    debug!("{text}");
+    let re = Regex::new(r"speed\s+(\d+)\s+baud").unwrap();
+    let mo = re.captures(text).ok_or("no baud rate found")?;
+    let baud: u32 = mo[1].parse()?;
+    if baud == 0 {
+        Err("zero baud rate".into())
+    } else {
+        Ok(baud)
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("error"))
         .format_timestamp(None)
@@ -80,7 +101,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
 
     let path = args.port.to_string_lossy();
-    let mut port = serialport::new(path, args.baud)
+    let baud = match args.baud {
+        Some(x) => { x },
+        None => {
+            match get_baud_from_stty(&path) {
+                Ok(b) => { info!("Keeping baudrate {b}"); b },
+                Err(_) => { 38400 }
+            }
+        }
+    };
+
+    let mut port = serialport::new(path, baud)
                         .timeout(Duration::from_millis(1000))
                         .open()
                         .expect("Error opening serial port");

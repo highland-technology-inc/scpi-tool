@@ -398,6 +398,7 @@ dependencies = [
  "clap",
  "env_logger",
  "log",
+ "regex",
  "serialport",
 ]
 
