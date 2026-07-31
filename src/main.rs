@@ -12,9 +12,13 @@ const LONG_ABOUT: &str = "Command line tool for executing SCPI queries and gathe
 Uses Rust env_logger, so debug verbosity can be set with the RUST_LOG environment variable.
 ";
 
+const EXAMPLE: &str = "Example:
+    $ ./scpi-tool /dev/ttyUSB0 115200 \"*IDN?\"
+    Highland Technology,P200-A1,eng-02,23E201-1.0
+";
 
 #[derive(Parser)]
-#[command(version, about, long_about=LONG_ABOUT)]
+#[command(version, about, after_long_help=EXAMPLE, long_about=LONG_ABOUT)]
 struct Cli {
     /// Serial port
     port: PathBuf,
@@ -23,17 +27,20 @@ struct Cli {
     #[arg(short, long, default_value_t=38400)]
     baud: u32,
 
-    /// Error fetch mode
+    /// Error fetch mode.  After sending command (if present), query SYST:ERR? until the queue is empty.
     #[arg(short, long)]
     errors: bool,
 
+    /// The command or query to send to the device.  Should probably be quoted.
     #[clap(trailing_var_arg=true)]
     command: Vec<String>,
 }
 
-/// Transact a command against the port.
+/// Transact a command, returning the result if it's a query.
 ///
-/// command should not end in a newline
+/// port is the open connection to the SCPI device.
+/// command should not end in a newline.
+///
 fn transaction<T: Read+Write>(port: &mut T, command: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
     debug!("X> {command}");
     port.write(command.as_bytes())?;
@@ -88,6 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(Some(x)) => {println!("{x}");}
             Err(e) => {
                 error!("{e}");
+                return Err(e);
             }
         }
     }
@@ -102,7 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(e) => {
                     error!("{e}");
-                    break;
+                    return Err(e);
                 }
             }
         }
