@@ -8,6 +8,8 @@ use log::{debug, info, warn, error};
 use env_logger;
 use regex::Regex;
 
+mod cmd_iterators;
+
 const LONG_ABOUT: &str = "Command line tool for executing SCPI queries and gathering responses.
 
 Uses Rust env_logger, so debug verbosity can be set with the RUST_LOG environment variable.
@@ -31,8 +33,10 @@ struct Cli {
     /// Error fetch mode.  After sending command (if present), query SYST:ERR? until the queue is empty.
     #[arg(short, long)]
     errors: bool,
-    
+
     /// The command or query to send to the device.  Should probably be quoted.
+    /// If no command is provided, uses stdin.  This will be an interactive session
+    /// if stdin is a tty.
     #[clap(trailing_var_arg=true)]
     command: Vec<String>,
 }
@@ -105,47 +109,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(x) => { x },
         None => {
             match get_baud_from_stty(&path) {
-                Ok(b) => { info!("Keeping baudrate {b}"); b },
-                Err(_) => { 38400 }
+                Ok(b) =>    { info!("Keeping baudrate {b}"); b },
+                Err(_) =>   { 38400 }
             }
         }
     };
 
     let mut port = serialport::new(path, baud)
                         .timeout(Duration::from_millis(1000))
-                        .open()
-                        .expect("Error opening serial port");
+                        .open()?;
 
     info!("{port:?}");
 
-    // Send the command out.
+    // If we have a command then we only iterate over that one command.
+    // Otherwise, build a readline based iterator to keep going until
+    // Ctrl-D.
+    //
     let command = String::from(args.command.join(" ").trim());
-    if !(command.is_empty()) {
-        match transaction(&mut port, &command) {
-            Ok(None) => {debug!("No query");},
-            Ok(Some(x)) => {println!("{x}");}
-            Err(e) => {
-                error!("{e}");
-                return Err(e);
+    let cmd_iter : Box<dyn Iterator<Item = String>> = if command.is_empty() {
+        Box::new(cmd_iterators::ReadlineCommands::new())
+    } else {
+        Box::new(Option::from(command).into_iter())
+    };
+
+    // And iterate over all the commands we have until we're
+    for c in cmd_iter {
+        // Send the command out if one was provided.
+        if !(c.is_empty()) {
+            match transaction(&mut port, &c) {
+                Ok(None) =>     {debug!("No query");},
+                Ok(Some(x)) =>  {println!("{x}");}
+                Err(e) =>       {error!("{e}"); return Err(e);}
+            }
+        }
+
+        // If the --errors flag was provided, flush out the 
+        // system error queue.
+        if args.errors {
+            loop {
+                match transaction(&mut port, "SYST:ERR?") {
+                    Ok(None) =>     {panic!("transaction() didn't see a query")},
+                    Ok(Some(x)) =>  {
+                        println!("{x}");
+                        if x.contains("No error") { break; }
+                    }
+                    Err(e) =>       {error!("{e}"); return Err(e);}
+                }
             }
         }
     }
-
-    if args.errors {
-        loop {
-            match transaction(&mut port, "SYST:ERR?") {
-                Ok(None) => {panic!("transaction() didn't see a query")},
-                Ok(Some(x)) => {
-                    println!("{x}");
-                    if x.contains("No error") { break; }
-                }
-                Err(e) => {
-                    error!("{e}");
-                    return Err(e);
-                }
-            }
-        }
-    }
-
     Ok(())
 }
