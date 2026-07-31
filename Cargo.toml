@@ -3,6 +3,9 @@ name = "scpi-tool"
 version = "0.1.1"
 edition = "2024"
 description = "Command line tool for executing SCPI queries and gathering responses."
+readme = "README.md"
+repository = "https://github.com/highland-technology-inc/scpi-tool"
+license = "MIT"
 
 [dependencies]
 clap = { version = "4.6.4", features = ["derive"] }
