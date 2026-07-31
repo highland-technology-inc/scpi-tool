@@ -1,0 +1,8 @@
+[package]
+name = "scpi-tool"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.6.4", features = ["derive"] }
+timeout-readwrite = "0.4.0"
